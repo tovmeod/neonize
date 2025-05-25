@@ -2617,7 +2617,14 @@ class NewClient:
 
     def disconnect(self) -> None:
         """
-        Disconnect the client
+        Disconnect the client.
+
+        This calls the underlying Go FFI function `Disconnect`.
+        The Go library is responsible for gracefully closing its own gRPC channels
+        and ensuring any spawned Go processes are terminated.
+        Direct management of gRPC channel grace periods or subprocess waiting
+        (e.g., `process.wait(timeout=5)`) is handled within the Go backend,
+        as the Python layer does not have direct objects for `channel` or `process`.
         """
         self.__client.Disconnect(self.uuid)
 
