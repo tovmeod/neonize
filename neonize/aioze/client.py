@@ -2776,7 +2776,7 @@ class NewAClient:
             # The asyncio.gather call can still use self._background_tasks directly
             # as it handles the tasks themselves.
             try:
-                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+                await asyncio.gather(*active_tasks_to_cancel, return_exceptions=True)
                 log.debug("All background tasks gathered.")
             except asyncio.CancelledError:
                 log.debug("Background tasks gathering was cancelled, which is expected during shutdown.")
