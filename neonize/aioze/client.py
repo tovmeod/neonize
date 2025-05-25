@@ -422,7 +422,7 @@ class NewAClient:
         self.qr = self.event.qr
         self.contact = ContactStore(self.uuid)
         self.chat_settings = ChatSettingsStore(self.uuid)
-        self._background_tasks = []
+        self._background_tasks = set()
         log.debug("🔨 Creating a NewClient instance")
 
     def __onLoginStatus(self, s: str):
@@ -2753,7 +2753,8 @@ class NewAClient:
             b"",
             0,
         ))
-        self._background_tasks.append(task)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def disconnect(self) -> None:
         """
@@ -2766,10 +2767,13 @@ class NewAClient:
         log.info(f"Initiating backend shutdown for client {self.uuid.decode()}...")
         # Cancel and gather all background tasks
         if self._background_tasks:
-            log.debug(f"Cancelling {len(self._background_tasks)} background tasks...")
-            for task in self._background_tasks:
+            active_tasks_to_cancel = list(self._background_tasks) # Create a list copy for iteration
+            log.debug(f"Cancelling {len(active_tasks_to_cancel)} background tasks...")
+            for task in active_tasks_to_cancel:
                 if not task.done():
                     task.cancel()
+            # The asyncio.gather call can still use self._background_tasks directly
+            # as it handles the tasks themselves.
             try:
                 await asyncio.gather(*self._background_tasks, return_exceptions=True)
                 log.debug("All background tasks gathered.")
