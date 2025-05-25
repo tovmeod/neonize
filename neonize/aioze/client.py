@@ -2642,7 +2642,8 @@ class NewAClient:
             payload,
             len(payload),
         ))
-        self._background_tasks.append(task)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def get_message_for_retry(
         self, requester: JID, to: JID, message_id: str
