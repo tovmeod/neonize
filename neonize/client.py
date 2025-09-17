@@ -2617,7 +2617,7 @@ class NewClient:
 
     def disconnect(self) -> None:
         """
-        Disconnect the client
+        Disconnect the client.
         """
         self.__client.Disconnect(self.uuid)
 

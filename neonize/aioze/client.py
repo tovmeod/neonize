@@ -422,6 +422,7 @@ class NewAClient:
         self.qr = self.event.qr
         self.contact = ContactStore(self.uuid)
         self.chat_settings = ChatSettingsStore(self.uuid)
+        self._background_tasks = set()
         log.debug("🔨 Creating a NewClient instance")
 
     def __onLoginStatus(self, s: str):
@@ -2624,7 +2625,7 @@ class NewAClient:
             jidbuf = self.jid.SerializeToString()
             jidbuf_size = len(jidbuf)
 
-        await self.__client.Neonize(
+        task = asyncio.create_task(self.__client.Neonize(
             self.name.encode(),
             self.uuid,
             jidbuf,
@@ -2640,7 +2641,9 @@ class NewAClient:
             len(deviceprops),
             payload,
             len(payload),
-        )
+        ))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def get_message_for_retry(
         self, requester: JID, to: JID, message_id: str
@@ -2734,7 +2737,7 @@ class NewAClient:
             jidbuf_size = len(jidbuf)
 
         # Initiate connection to the server
-        await self.__client.Neonize(
+        task = asyncio.create_task(self.__client.Neonize(
             self.name.encode(),
             self.uuid,
             jidbuf,
@@ -2750,13 +2753,46 @@ class NewAClient:
             len(deviceprops),
             b"",
             0,
-        )
+        ))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def disconnect(self) -> None:
         """
         Disconnect the client
         """
         await self.__client.Disconnect(self.uuid)
+
+    async def close_backend(self):
+        """Gracefully shuts down the backend connection and associated tasks."""
+        log.info(f"Initiating backend shutdown for client {self.uuid.decode()}...")
+        # Cancel and gather all background tasks
+        if self._background_tasks:
+            active_tasks_to_cancel = list(self._background_tasks) # Create a list copy for iteration
+            log.debug(f"Cancelling {len(active_tasks_to_cancel)} background tasks...")
+            for task in active_tasks_to_cancel:
+                if not task.done():
+                    task.cancel()
+            # The asyncio.gather call can still use self._background_tasks directly
+            # as it handles the tasks themselves.
+            try:
+                await asyncio.gather(*active_tasks_to_cancel, return_exceptions=True)
+                log.debug("All background tasks gathered.")
+            except asyncio.CancelledError:
+                log.debug("Background tasks gathering was cancelled, which is expected during shutdown.")
+            except Exception as e:
+                log.error(f"Error during background task gathering: {e}", exc_info=True)
+            self._background_tasks.clear()
+        else:
+            log.debug("No background tasks to cancel.")
+
+        # Disconnect the underlying Go client
+        try:
+            log.debug("Disconnecting underlying Go client...")
+            await self.__client.Disconnect(self.uuid) # This uses GoCode, so it's already to_thread
+            log.info(f"Successfully disconnected backend for client {self.uuid.decode()}.")
+        except Exception as e:
+            log.error(f"Error during Go client disconnection: {e}", exc_info=True)
 
 
 class ClientFactory:
