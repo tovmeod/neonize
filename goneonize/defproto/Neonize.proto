@@ -669,7 +669,11 @@ message Disconnected{
     required bool status = 1;
 } // 12
 
-message HistorySync { // 13
+message AppStateSyncComplete { // 13
+    required string Name = 1;
+}
+
+message HistorySync { // 14
     required WAWebProtobufsHistorySync.HistorySync Data = 1;
 }
 

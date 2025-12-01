@@ -520,13 +520,24 @@ func Neonize(db *C.char, id *C.char, JIDByte *C.uchar, JIDSize C.int, logLevel *
 				}
 				eventChan <- &messageEvent
 			}
-		case *events.HistorySync:
+		case *events.AppStateSyncComplete:
 			if _, ok := subscribers[13]; ok {
+				appStateSync := defproto.AppStateSyncComplete{
+					Name: proto.String(string(v.Name)),
+				}
+				messageEvent := MessageEvent{
+					eventType: 13,
+					message:   &appStateSync,
+				}
+				eventChan <- &messageEvent
+			}
+		case *events.HistorySync:
+			if _, ok := subscribers[14]; ok {
 				data := defproto.HistorySync{
 					Data: v.Data,
 				}
 				messageEvent := MessageEvent{
-					eventType: 13,
+					eventType: 14,
 					message:   &data,
 				}
 				eventChan <- &messageEvent

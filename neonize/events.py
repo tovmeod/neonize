@@ -11,6 +11,7 @@ from google.protobuf.message import Message
 from neonize.exc import UnsupportedEvent
 
 from .proto.Neonize_pb2 import QR as QREv
+from .proto.Neonize_pb2 import AppStateSyncComplete as AppStateSyncCompleteEv
 from .proto.Neonize_pb2 import BlocklistChange as BlocklistChangeEv
 from .proto.Neonize_pb2 import BlocklistEvent as BlocklistEv
 from .proto.Neonize_pb2 import CallAccept as CallAcceptEv
@@ -70,7 +71,8 @@ EVENT_TO_INT: Dict[Type[Message], int] = {
     ClientOutdatedEv: 10,
     StreamErrorEv: 11,
     DisconnectedEv: 12,
-    HistorySyncEv: 13,
+    AppStateSyncCompleteEv: 13,
+    HistorySyncEv: 14,
     NewsLetterMessageMetaEv: 16,
     MessageEv: 17,
     ReceiptEv: 18,
