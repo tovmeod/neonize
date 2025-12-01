@@ -46,3 +46,49 @@ Verify the fix by:
 1. Calling `GetJoinedGroups()` for an account with groups
 2. Checking that all groups are returned (no "Error parsing group" warnings)
 3. Verifying `GroupCreated` field is populated when available, zero time when missing
+
+---
+
+## Patch 2: Link Code Pairing Nonce - String Instead of Byte Slice
+
+### Issue
+Pair code linking fails with the upstream implementation. Testing showed that changing the nonce type from `[]byte{0}` to `"0"` (matching Baileys library implementation) makes pairing work reliably.
+
+### Root Cause
+File: `vendor/go.mau.fi/whatsmeow/pair-code.go:120`
+
+The current implementation uses a byte slice:
+```go
+{Tag: "link_code_pairing_nonce", Content: []byte{0}}
+```
+
+This prevents successful pairing in practice.
+
+### Fix
+Change to string type (matching Baileys JavaScript implementation):
+```go
+{Tag: "link_code_pairing_nonce", Content: "0"}
+```
+
+### Rationale
+- Baileys library (https://github.com/WhiskeySockets/Baileys) uses string `"0"` and works
+- Extensive testing (one week) showed pairing fails with `[]byte{0}` but succeeds with `"0"`
+- WhatsApp protocol appears to expect string type for this field
+
+### When to Apply
+- After running `go mod vendor` in `goneonize/` directory
+- Before building the shared library (`.so`/`.dll`/`.dylib`)
+- Automated via `apply-patches.sh` script
+
+### Upstream Status
+- **Rejected by upstream maintainer** as of November 16, 2024
+- PR: https://github.com/tulir/whatsmeow/pull/1003
+- Maintainer claims `[]byte{0}` is correct, suggested version mismatch
+- However, real-world testing proves string type works and byte slice fails
+- This patch should remain until upstream reconsiders or provides working alternative
+
+### Testing
+Verify the fix by:
+1. Attempting pair code linking with a fresh WhatsApp account
+2. Confirming pairing completes successfully
+3. Verifying the paired device appears in WhatsApp linked devices
