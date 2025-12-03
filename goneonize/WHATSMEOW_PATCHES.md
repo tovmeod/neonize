@@ -92,3 +92,61 @@ Verify the fix by:
 1. Attempting pair code linking with a fresh WhatsApp account
 2. Confirming pairing completes successfully
 3. Verifying the paired device appears in WhatsApp linked devices
+
+---
+
+## Patch 3: Add BuildClearChat Function - Clear Messages Without Deleting Chat
+
+### Issue
+WhatsApp's "Clear Chat" functionality (removing all messages while keeping the chat in the conversation list) is not available in upstream whatsmeow. The library has `BuildDeleteChat` but not `BuildClearChat`.
+
+### Root Cause
+File: `vendor/go.mau.fi/whatsmeow/appstate/encode.go`
+
+Upstream whatsmeow does NOT have a `BuildClearChat` function. We need to add it.
+
+### Fix
+Add a new function `BuildClearChat` that uses `ClearChatAction` (which exists in whatsmeow's protobuf definitions) to clear all messages from a chat.
+
+**Critical:** The index must have 4 elements per Baileys reference implementation:
+```javascript
+// Baileys (working implementation)
+index: ['clearChat', jid, '1', '0'],  // 4 elements
+```
+
+- Element 1: `'clearChat'` - action type
+- Element 2: JID - chat identifier
+- Element 3: `'1'` - delete all messages (use `'0'` to keep starred messages)
+- Element 4: `'0'` - required parameter
+
+```go
+func BuildClearChat(target types.JID, lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) PatchInfo {
+    // ... action setup ...
+    return PatchInfo{
+        Type: WAPatchRegular,
+        Mutations: []MutationInfo{{
+            Index:   []string{IndexClearChat, target.String(), "1", "0"},  // 4 elements required
+            Version: 6,
+            Value: &waSyncAction.SyncActionValue{
+                ClearChatAction: action,
+            },
+        }},
+    }
+}
+```
+
+### When to Apply
+- After running `go mod vendor` in `goneonize/` directory
+- Before building the shared library (`.so`/`.dll`/`.dylib`)
+- Automated via `apply-patches.sh` script
+
+### Upstream Status
+- **Not available upstream** - Feature addition, not a bug fix
+- Consider submitting PR to https://github.com/tulir/whatsmeow after testing
+
+### Testing
+Verify the fix by:
+1. Calling `clear_chat()` on a group or individual chat
+2. Confirming no 409 Conflict error is returned
+3. Confirming all messages are removed from the chat
+4. Verifying the chat itself remains in the conversation list

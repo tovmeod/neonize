@@ -160,6 +160,36 @@ func BuildMarkChatAsRead(target types.JID, read bool, lastMessageTimestamp time.
 	}
 }
 
+// BuildClearChat builds an app state patch for clearing all messages in a chat.
+// This removes messages from the chat but keeps the chat itself in the conversation list.
+func BuildClearChat(target types.JID, lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) PatchInfo {
+	if lastMessageTimestamp.IsZero() {
+		lastMessageTimestamp = time.Now()
+	}
+	action := &waSyncAction.ClearChatAction{
+		MessageRange: &waSyncAction.SyncActionMessageRange{
+			LastMessageTimestamp: proto.Int64(lastMessageTimestamp.Unix()),
+		},
+	}
+	if lastMessageKey != nil {
+		action.MessageRange.Messages = []*waSyncAction.SyncActionMessage{{
+			Key:       lastMessageKey,
+			Timestamp: proto.Int64(lastMessageTimestamp.Unix()),
+		}}
+	}
+
+	return PatchInfo{
+		Type: WAPatchRegular,
+		Mutations: []MutationInfo{{
+			Index:   []string{IndexClearChat, target.String()},
+			Version: 6,
+			Value: &waSyncAction.SyncActionValue{
+				ClearChatAction: action,
+			},
+		}},
+	}
+}
+
 func newLabelChatMutation(target types.JID, labelID string, labeled bool) MutationInfo {
 	return MutationInfo{
 		Index:   []string{IndexLabelAssociationChat, labelID, target.String()},

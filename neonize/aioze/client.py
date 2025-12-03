@@ -169,6 +169,11 @@ from ..proto.waE2E.WAWebProtobufsE2E_pb2 import (
     VideoMessage,
 )
 from ..proto.waMsgApplication.WAMsgApplication_pb2 import MessageApplication
+from ..proto.waSyncAction.WASyncAction_pb2 import (
+    ClearChatAction,
+    SyncActionMessageRange,
+    SyncActionValue,
+)
 from ..types import MessageServerID, MessageWithContextInfo
 from ..utils import add_exif, gen_vcard, get_message_type, validate_link
 from ..utils.calc import AspectRatioMethod, auto_sticker, original_sticker
@@ -343,15 +348,18 @@ class ContactStore:
 
 
 class ChatSettingsStore:
-    def __init__(self, uuid: bytes) -> None:
+    def __init__(self, uuid: bytes, parent_client=None) -> None:
         """
         Initialize the ChatSettingsStore with a unique identifier.
 
         :param uuid: Unique identifier for the chat settings store.
         :type uuid: bytes
+        :param parent_client: Optional reference to the parent NewAClient for send_app_state access.
+        :type parent_client: Optional[NewAClient]
         """
         self.uuid = uuid
         self.__client = async_gocode
+        self._parent_client = parent_client
 
     async def put_muted_until(self, user: JID, until: timedelta):
         """
@@ -403,6 +411,56 @@ class ChatSettingsStore:
         )
         if return_:
             raise PutArchivedError(return_.decode())
+
+    async def clear_chat(self, chat: JID, keep_starred: bool = False):
+        """
+        Clear all messages from a chat while keeping the chat in the conversation list.
+
+        Uses WhatsApp's App State protocol to send a clearChat patch.
+        Index format per Baileys: ['clearChat', jid, delete_starred, '0']
+        - delete_starred: '1' = delete all messages, '0' = keep starred messages
+
+        :param chat: The chat JID to clear.
+        :type chat: JID
+        :param keep_starred: If True, keep starred messages. Default is False (delete all).
+        :type keep_starred: bool
+        :raises SendAppStateError: If there is an error while clearing the chat.
+        """
+        # Build JID string (e.g. "123456789@g.us")
+        jid_string = f"{chat.User}@{chat.Server}"
+
+        # Build the message range with current timestamp
+        message_range = SyncActionMessageRange(
+            lastMessageTimestamp=int(time.time())
+        )
+
+        # Build the ClearChatAction
+        clear_action = ClearChatAction(messageRange=message_range)
+
+        # Build the SyncActionValue containing the action
+        action_value = SyncActionValue(clearChatAction=clear_action)
+
+        # Index element 2: '0' = keep starred, '1' = delete all (including starred)
+        delete_starred_flag = "0" if keep_starred else "1"
+
+        # Build the MutationInfo with correct 4-element index per Baileys
+        mutation = neonize_proto.MutationInfo(
+            Index=["clearChat", jid_string, delete_starred_flag, "0"],
+            Version=6,
+            Value=action_value,
+        )
+
+        # Build the PatchInfo
+        patch = neonize_proto.PatchInfo(
+            Timestamp=int(time.time()),
+            Type=neonize_proto.PatchInfo.REGULAR_HIGH,
+            Mutations=[mutation],
+        )
+
+        # Send via parent client's send_app_state method
+        if self._parent_client is None:
+            raise SendAppStateError("ChatSettingsStore not initialized with parent client")
+        await self._parent_client.send_app_state(patch)
 
     async def get_chat_settings(self, user: JID) -> LocalChatSettings:
         """
@@ -457,7 +515,7 @@ class NewAClient:
         self.paircode = self.event.paircode
         self.qr = self.event.qr
         self.contact = ContactStore(self.uuid)
-        self.chat_settings = ChatSettingsStore(self.uuid)
+        self.chat_settings = ChatSettingsStore(self.uuid, parent_client=self)
         self.connect_task = None
         self.connected = False
         self.loop = event_global_loop

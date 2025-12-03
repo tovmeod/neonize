@@ -24,6 +24,7 @@ import (
 	"github.com/krypton-byte/neonize/utils"
 	_ "github.com/mattn/go-sqlite3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/proto/waConsumerApplication"
 	waE2E "go.mau.fi/whatsmeow/proto/waE2E"
@@ -1598,6 +1599,24 @@ func SendAppState(id *C.char, patchByte *C.uchar, patchSize C.int) *C.char {
 		return C.CString(err_unmarshal.Error())
 	}
 	err := clients[C.GoString(id)].SendAppState(context.Background(), *utils.DecodePatchInfo(&patchInfo))
+	if err != nil {
+		return C.CString(err.Error())
+	}
+	return C.CString("")
+}
+
+//export ClearChat
+func ClearChat(id *C.char, JIDByte *C.uchar, JIDSize C.int) *C.char {
+	var chatJID defproto.JID
+	err := proto.Unmarshal(getByteByAddr(JIDByte, JIDSize), &chatJID)
+	if err != nil {
+		return C.CString(err.Error())
+	}
+
+	jid := utils.DecodeJidProto(&chatJID)
+	patch := appstate.BuildClearChat(jid, time.Now(), nil)
+
+	err = clients[C.GoString(id)].SendAppState(context.Background(), patch)
 	if err != nil {
 		return C.CString(err.Error())
 	}

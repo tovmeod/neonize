@@ -483,6 +483,8 @@ if not os.environ.get("SPHINX"):
         ctypes.c_bool,
     ]
     gocode.PutArchived.restype = ctypes.c_char_p
+    # ClearChat is now implemented in pure Python (aioze/client.py ChatSettingsStore.clear_chat)
+    # No Go binding needed - uses send_app_state() directly
     gocode.GetChatSettings.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
     gocode.GetChatSettings.restype = ctypes.POINTER(Bytes)
     gocode.GetAllDevices.argtypes = [ctypes.c_char_p, func_callback_bytes2]

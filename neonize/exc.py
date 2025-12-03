@@ -238,6 +238,10 @@ class PutArchivedError(Exception):
     pass
 
 
+class ClearChatError(Exception):
+    pass
+
+
 class GetChatSettingsError(Exception):
     pass
 

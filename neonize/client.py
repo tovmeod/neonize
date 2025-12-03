@@ -35,6 +35,7 @@ from .events import Event, EventsManager
 from .exc import (
     BuildPollVoteCreationError,
     BuildPollVoteError,
+    ClearChatError,
     ContactStoreError,
     ConvertStickerError,
     CreateGroupError,
@@ -363,6 +364,19 @@ class ChatSettingsStore:
         )
         if return_:
             raise PutArchivedError(return_.decode())
+
+    def clear_chat(self, chat: JID):
+        """
+        Clear all messages from a chat while keeping the chat in the conversation list.
+
+        :param chat: The chat JID to clear.
+        :type chat: JID
+        :raises ClearChatError: If there is an error while clearing the chat.
+        """
+        chat_buf = chat.SerializeToString()
+        return_ = self.__client.ClearChat(self.uuid, chat_buf, len(chat_buf))
+        if return_:
+            raise ClearChatError(return_.decode())
 
     def get_chat_settings(self, user: JID) -> LocalChatSettings:
         """

@@ -45,4 +45,60 @@ else
     echo "✓ Patch 2 applied successfully"
 fi
 
+# Patch 3: Add BuildClearChat function for clearing chat messages
+# Upstream whatsmeow does NOT have BuildClearChat - we must add it
+# Uses 4-element index per Baileys: ['clearChat', jid, '1', '0']
+PATCH_FILE_3="vendor/go.mau.fi/whatsmeow/appstate/encode.go"
+if [ ! -f "$PATCH_FILE_3" ]; then
+    echo "Error: $PATCH_FILE_3 not found"
+    exit 1
+fi
+
+# Check if patch is already applied (with correct 4-element index)
+if grep -q 'IndexClearChat, target.String(), "1", "0"' "$PATCH_FILE_3"; then
+    echo "Patch 3 already applied to $PATCH_FILE_3"
+else
+    # Check if old broken patch exists (2-element index)
+    if grep -q 'func BuildClearChat' "$PATCH_FILE_3"; then
+        echo "ERROR: BuildClearChat exists with wrong index. Manual fix required."
+        echo "Remove the existing BuildClearChat function and re-run this script."
+        exit 1
+    fi
+    echo "Applying BuildClearChat patch to $PATCH_FILE_3..."
+    cat >> "$PATCH_FILE_3" << 'BUILDCLEARCHAT_EOF'
+
+// BuildClearChat builds an app state patch for clearing all messages in a chat.
+// This removes messages from the chat but keeps the chat itself in the conversation list.
+// Note: Upstream whatsmeow does NOT have this function - this is our patch.
+func BuildClearChat(target types.JID, lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) PatchInfo {
+	if lastMessageTimestamp.IsZero() {
+		lastMessageTimestamp = time.Now()
+	}
+	action := &waSyncAction.ClearChatAction{
+		MessageRange: &waSyncAction.SyncActionMessageRange{
+			LastMessageTimestamp: proto.Int64(lastMessageTimestamp.Unix()),
+		},
+	}
+	if lastMessageKey != nil {
+		action.MessageRange.Messages = []*waSyncAction.SyncActionMessage{{
+			Key:       lastMessageKey,
+			Timestamp: proto.Int64(lastMessageTimestamp.Unix()),
+		}}
+	}
+
+	return PatchInfo{
+		Type: WAPatchRegular,
+		Mutations: []MutationInfo{{
+			Index:   []string{IndexClearChat, target.String(), "1", "0"},
+			Version: 6,
+			Value: &waSyncAction.SyncActionValue{
+				ClearChatAction: action,
+			},
+		}},
+	}
+}
+BUILDCLEARCHAT_EOF
+    echo "✓ Patch 3 applied successfully"
+fi
+
 echo "All patches applied successfully!"
