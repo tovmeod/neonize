@@ -69,6 +69,7 @@ if not os.environ.get("SPHINX"):
         ctypes.c_int,
         ctypes.c_char_p,
         ctypes.c_int,
+        ctypes.c_bool,  # automaticMessageRerequestFromPhone
     ]
     gocode.GetLIDFromPN.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
     gocode.GetLIDFromPN.restype = ctypes.POINTER(Bytes)
@@ -351,6 +352,13 @@ if not os.environ.get("SPHINX"):
     gocode.PairPhone.restype = ctypes.POINTER(Bytes)
     gocode.SendAppState.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
     gocode.SendAppState.restype = ctypes.c_char_p
+    gocode.FetchAppState.argtypes = [
+        ctypes.c_char_p,  # id (session UUID)
+        ctypes.c_char_p,  # patchName (WAPatchName as string)
+        ctypes.c_bool,    # fullSync
+        ctypes.c_bool,    # onlyIfNotSynced
+    ]
+    gocode.FetchAppState.restype = ctypes.c_char_p
     gocode.SetDefaultDisappearingTimer.argtypes = [ctypes.c_char_p, ctypes.c_int64]
     gocode.SetDefaultDisappearingTimer.restype = ctypes.c_char_p
     gocode.SetDisappearingTimer.argtypes = [
@@ -363,6 +371,8 @@ if not os.environ.get("SPHINX"):
     gocode.SetDisappearingTimer.restype = ctypes.c_char_p
     gocode.SetForceActiveDeliveryReceipts.argtypes = [ctypes.c_char_p, ctypes.c_bool]
     gocode.SetForceActiveDeliveryReceipts.restype = ctypes.c_void_p
+    gocode.SetAutomaticMessageRerequestFromPhone.argtypes = [ctypes.c_char_p, ctypes.c_bool]
+    gocode.SetAutomaticMessageRerequestFromPhone.restype = ctypes.c_void_p
     gocode.SetGroupAnnounce.argtypes = [
         ctypes.c_char_p,
         ctypes.c_char_p,

@@ -179,9 +179,16 @@ class Event:
 
             def wrap_paircode(_, code, connected: bool):
                 paircode = ctypes.string_at(code)
-                asyncio.run_coroutine_threadsafe(
+                future = asyncio.run_coroutine_threadsafe(
                     f(self.client, paircode.decode(), connected), event_global_loop
-                ).result()
+                )
+                # Fire-and-forget with error logging (consistent with execute() method)
+                def _log_error(fut):
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        log.error(f"Paircode callback error: {e}")
+                future.add_done_callback(_log_error)
 
             self.blocking_func = wrap_paircode
             return self.blocking_func
