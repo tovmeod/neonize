@@ -35,13 +35,13 @@ from .events import Event, EventsManager
 from .exc import (
     BuildPollVoteCreationError,
     BuildPollVoteError,
-    ClearChatError,
     ContactStoreError,
     ConvertStickerError,
     CreateGroupError,
     CreateNewsletterError,
     DecryptPollVoteError,
     DownloadError,
+    FetchAppStateError,
     FollowNewsletterError,
     GetBlocklistError,
     GetChatSettingsError,
@@ -97,6 +97,11 @@ from .exc import (
     UploadError,
 )
 from .proto import Neonize_pb2 as neonize_proto
+from .proto.waSyncAction.WASyncAction_pb2 import (
+    ClearChatAction,
+    SyncActionMessageRange,
+    SyncActionValue,
+)
 from .proto.Neonize_pb2 import (
     JID,
     Blocklist,
@@ -306,15 +311,18 @@ class ContactStore:
 
 
 class ChatSettingsStore:
-    def __init__(self, uuid: bytes) -> None:
+    def __init__(self, uuid: bytes, parent_client: "NewClient" = None) -> None:
         """
         Initialize the ChatSettingsStore with a unique identifier.
 
         :param uuid: Unique identifier for the chat settings store.
         :type uuid: bytes
+        :param parent_client: Reference to the parent NewClient for app state operations.
+        :type parent_client: NewClient, optional
         """
         self.uuid = uuid
         self.__client = gocode
+        self._parent_client = parent_client
 
     def put_muted_until(self, user: JID, until: timedelta):
         """
@@ -365,18 +373,75 @@ class ChatSettingsStore:
         if return_:
             raise PutArchivedError(return_.decode())
 
-    def clear_chat(self, chat: JID):
+    def clear_chat(self, chat: JID, keep_starred: bool = False):
         """
         Clear all messages from a chat while keeping the chat in the conversation list.
 
+        Uses WhatsApp's App State protocol to send a clearChat patch.
+        Index format per Baileys: ['clearChat', jid, delete_starred, '0']
+        - delete_starred: '1' = delete all messages, '0' = keep starred messages
+
+        If a 409 conflict error or LTHash mismatch occurs (app state corruption),
+        this method automatically syncs the regular_high app state and retries once.
+
         :param chat: The chat JID to clear.
         :type chat: JID
-        :raises ClearChatError: If there is an error while clearing the chat.
+        :param keep_starred: If True, keep starred messages. Default is False (delete all).
+        :type keep_starred: bool
+        :raises SendAppStateError: If there is an error while clearing the chat.
         """
-        chat_buf = chat.SerializeToString()
-        return_ = self.__client.ClearChat(self.uuid, chat_buf, len(chat_buf))
-        if return_:
-            raise ClearChatError(return_.decode())
+        if self._parent_client is None:
+            raise SendAppStateError("ChatSettingsStore not initialized with parent client")
+
+        def _build_patch():
+            # Build JID string (e.g. "123456789@g.us")
+            jid_string = f"{chat.User}@{chat.Server}"
+
+            # Build the message range with current timestamp
+            message_range = SyncActionMessageRange(
+                lastMessageTimestamp=int(time.time())
+            )
+
+            # Build the ClearChatAction
+            clear_action = ClearChatAction(messageRange=message_range)
+
+            # Build the SyncActionValue containing the action
+            action_value = SyncActionValue(clearChatAction=clear_action)
+
+            # Index element 2: '0' = keep starred, '1' = delete all (including starred)
+            delete_starred_flag = "0" if keep_starred else "1"
+
+            # Build the MutationInfo with correct 4-element index per Baileys
+            mutation = neonize_proto.MutationInfo(
+                Index=["clearChat", jid_string, delete_starred_flag, "0"],
+                Version=6,
+                Value=action_value,
+            )
+
+            # Build the PatchInfo
+            return neonize_proto.PatchInfo(
+                Timestamp=int(time.time()),
+                Type=neonize_proto.PatchInfo.REGULAR_HIGH,
+                Mutations=[mutation],
+            )
+
+        # Try to send the patch
+        try:
+            self._parent_client.send_app_state(_build_patch())
+        except SendAppStateError as e:
+            error_str = str(e)
+            # Check for 409 conflict or LTHash mismatch (app state corruption)
+            if '409' in error_str or 'conflict' in error_str.lower() or 'lthash' in error_str.lower():
+                # Sync the regular_high app state and retry
+                self._parent_client.fetch_app_state(
+                    patch_name="regular_high",
+                    full_sync=True,
+                    only_if_not_synced=False,
+                )
+                # Retry with fresh timestamp
+                self._parent_client.send_app_state(_build_patch())
+            else:
+                raise
 
     def get_chat_settings(self, user: JID) -> LocalChatSettings:
         """
@@ -426,7 +491,7 @@ class NewClient:
         self.event = Event(self)
         self.qr = self.event.qr
         self.contact = ContactStore(self.uuid)
-        self.chat_settings = ChatSettingsStore(self.uuid)
+        self.chat_settings = ChatSettingsStore(self.uuid, parent_client=self)
         self.connected = False
         self.me = None
         _log_.debug("🔨 Creating a NewClient instance")
@@ -2492,6 +2557,33 @@ class NewClient:
         if err:
             raise SendAppStateError(err)
 
+    def fetch_app_state(
+        self,
+        patch_name: str,
+        full_sync: bool = False,
+        only_if_not_synced: bool = False,
+    ):
+        """
+        Fetch updates to the given type of app state.
+
+        :param patch_name: The app state patch name ('regular_high', 'regular_low',
+                           'critical_block', 'critical_unblock_low', 'regular')
+        :type patch_name: str
+        :param full_sync: If True, reset version and re-fetch all patches
+        :type full_sync: bool
+        :param only_if_not_synced: If True, only fetch if not already synced
+        :type only_if_not_synced: bool
+        :raises FetchAppStateError: If there is an error while fetching app state
+        """
+        err = self.__client.FetchAppState(
+            self.uuid,
+            patch_name.encode() if isinstance(patch_name, str) else patch_name,
+            full_sync,
+            only_if_not_synced,
+        ).decode()
+        if err:
+            raise FetchAppStateError(err)
+
     def set_default_disappearing_timer(self, timer: typing.Union[timedelta, int]):
         """
         Sets a default disappearing timer for messages. The timer can be specified as a timedelta or an integer.
@@ -2549,6 +2641,21 @@ class NewClient:
         :type active: bool
         """
         self.__client.SetForceActiveDeliveryReceipts(self.uuid, active)
+
+    def set_automatic_message_rerequest_from_phone(self, enabled: bool):
+        """
+        Enable or disable automatic message re-request from phone when decryption fails.
+
+        When enabled, if a message fails to decrypt (missing sender key), the client
+        will automatically request the message from the user's phone after a short delay.
+        The phone has all sender keys and can forward the decrypted message.
+
+        This is useful for recovering from missing sender keys without re-pairing.
+
+        :param enabled: Whether to enable automatic re-request from phone
+        :type enabled: bool
+        """
+        self.__client.SetAutomaticMessageRerequestFromPhone(self.uuid, enabled)
 
     def set_group_announce(self, jid: JID, announce: bool):
         """

@@ -99,11 +99,10 @@ func (cli *Client) PairPhone(ctx context.Context, phone string, showPushNotifica
 		return "", ErrPhoneNumberIsNotInternational
 	}
 	jid := types.NewJID(phone, types.DefaultUserServer)
-	resp, err := cli.sendIQ(infoQuery{
+	resp, err := cli.sendIQ(ctx, infoQuery{
 		Namespace: "md",
 		Type:      iqSet,
 		To:        types.ServerJID,
-		Context:   ctx,
 		Content: []waBinary.Node{{
 			Tag: "link_code_companion_reg",
 			Attrs: waBinary.Attrs{
@@ -117,7 +116,7 @@ func (cli *Client) PairPhone(ctx context.Context, phone string, showPushNotifica
 				{Tag: "companion_server_auth_key_pub", Content: cli.Store.NoiseKey.Pub[:]},
 				{Tag: "companion_platform_id", Content: strconv.Itoa(int(clientType))},
 				{Tag: "companion_platform_display", Content: clientDisplayName},
-				{Tag: "link_code_pairing_nonce", Content: "0"},
+				{Tag: "link_code_pairing_nonce", Content: []byte{0}},
 			},
 		}},
 	})
@@ -223,11 +222,10 @@ func (cli *Client) handleCodePairNotification(ctx context.Context, parentNode *w
 	advSecret := hkdfutil.SHA256(advSecretInput, nil, []byte("adv_secret"), 32)
 	cli.Store.AdvSecretKey = advSecret
 
-	_, err = cli.sendIQ(infoQuery{
+	_, err = cli.sendIQ(ctx, infoQuery{
 		Namespace: "md",
 		Type:      iqSet,
 		To:        types.ServerJID,
-		Context:   ctx,
 		Content: []waBinary.Node{{
 			Tag: "link_code_companion_reg",
 			Attrs: waBinary.Attrs{

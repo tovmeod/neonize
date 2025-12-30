@@ -8,8 +8,14 @@ import collections.abc
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
 import google.protobuf.message
+import sys
 import typing
 import waWeb.WAWebProtobufsWeb_pb2
+
+if sys.version_info >= (3, 10):
+    import typing as typing_extensions
+else:
+    import typing_extensions
 
 DESCRIPTOR: google.protobuf.descriptor.FileDescriptor
 
@@ -27,4 +33,4 @@ class GroupHistory(google.protobuf.message.Message):
     ) -> None: ...
     def ClearField(self, field_name: typing.Literal["messages", b"messages"]) -> None: ...
 
-global___GroupHistory = GroupHistory
+Global___GroupHistory: typing_extensions.TypeAlias = GroupHistory

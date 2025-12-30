@@ -50,6 +50,7 @@ from ..exc import (
     CreateNewsletterError,
     DecryptPollVoteError,
     DownloadError,
+    FetchAppStateError,
     FollowNewsletterError,
     GetBlocklistError,
     GetChatSettingsError,
@@ -420,47 +421,67 @@ class ChatSettingsStore:
         Index format per Baileys: ['clearChat', jid, delete_starred, '0']
         - delete_starred: '1' = delete all messages, '0' = keep starred messages
 
+        If a 409 conflict error or LTHash mismatch occurs (app state corruption),
+        this method automatically syncs the regular_high app state and retries once.
+
         :param chat: The chat JID to clear.
         :type chat: JID
         :param keep_starred: If True, keep starred messages. Default is False (delete all).
         :type keep_starred: bool
         :raises SendAppStateError: If there is an error while clearing the chat.
         """
-        # Build JID string (e.g. "123456789@g.us")
-        jid_string = f"{chat.User}@{chat.Server}"
-
-        # Build the message range with current timestamp
-        message_range = SyncActionMessageRange(
-            lastMessageTimestamp=int(time.time())
-        )
-
-        # Build the ClearChatAction
-        clear_action = ClearChatAction(messageRange=message_range)
-
-        # Build the SyncActionValue containing the action
-        action_value = SyncActionValue(clearChatAction=clear_action)
-
-        # Index element 2: '0' = keep starred, '1' = delete all (including starred)
-        delete_starred_flag = "0" if keep_starred else "1"
-
-        # Build the MutationInfo with correct 4-element index per Baileys
-        mutation = neonize_proto.MutationInfo(
-            Index=["clearChat", jid_string, delete_starred_flag, "0"],
-            Version=6,
-            Value=action_value,
-        )
-
-        # Build the PatchInfo
-        patch = neonize_proto.PatchInfo(
-            Timestamp=int(time.time()),
-            Type=neonize_proto.PatchInfo.REGULAR_HIGH,
-            Mutations=[mutation],
-        )
-
-        # Send via parent client's send_app_state method
         if self._parent_client is None:
             raise SendAppStateError("ChatSettingsStore not initialized with parent client")
-        await self._parent_client.send_app_state(patch)
+
+        def _build_patch():
+            # Build JID string (e.g. "123456789@g.us")
+            jid_string = f"{chat.User}@{chat.Server}"
+
+            # Build the message range with current timestamp
+            message_range = SyncActionMessageRange(
+                lastMessageTimestamp=int(time.time())
+            )
+
+            # Build the ClearChatAction
+            clear_action = ClearChatAction(messageRange=message_range)
+
+            # Build the SyncActionValue containing the action
+            action_value = SyncActionValue(clearChatAction=clear_action)
+
+            # Index element 2: '0' = keep starred, '1' = delete all (including starred)
+            delete_starred_flag = "0" if keep_starred else "1"
+
+            # Build the MutationInfo with correct 4-element index per Baileys
+            mutation = neonize_proto.MutationInfo(
+                Index=["clearChat", jid_string, delete_starred_flag, "0"],
+                Version=6,
+                Value=action_value,
+            )
+
+            # Build the PatchInfo
+            return neonize_proto.PatchInfo(
+                Timestamp=int(time.time()),
+                Type=neonize_proto.PatchInfo.REGULAR_HIGH,
+                Mutations=[mutation],
+            )
+
+        # Try to send the patch
+        try:
+            await self._parent_client.send_app_state(_build_patch())
+        except SendAppStateError as e:
+            error_str = str(e)
+            # Check for 409 conflict or LTHash mismatch (app state corruption)
+            if '409' in error_str or 'conflict' in error_str.lower() or 'lthash' in error_str.lower():
+                # Sync the regular_high app state and retry
+                await self._parent_client.fetch_app_state(
+                    patch_name="regular_high",
+                    full_sync=True,
+                    only_if_not_synced=False,
+                )
+                # Retry with fresh timestamp
+                await self._parent_client.send_app_state(_build_patch())
+            else:
+                raise
 
     async def get_chat_settings(self, user: JID) -> LocalChatSettings:
         """
@@ -491,6 +512,7 @@ class NewAClient:
         jid: Optional[JID] = None,
         props: Optional[DeviceProps] = None,
         uuid: Optional[str] = None,
+        automatic_message_rerequest_from_phone: bool = False,
     ):
         """Initializes a new client instance.
 
@@ -503,6 +525,9 @@ class NewAClient:
         :type messageCallback: Optional[Callable[[NewClient, MessageSource, Message], None]], optional
         :param uuid: Optional. A unique identifier for the client, defaults to None.
         :type uuid: Optional[str], optional
+        :param automatic_message_rerequest_from_phone: Optional. Enable automatic message re-request from phone
+            when decryption fails due to missing sender keys. Defaults to False.
+        :type automatic_message_rerequest_from_phone: bool, optional
         """
         self.name = name
         self.device_props = props
@@ -520,7 +545,8 @@ class NewAClient:
         self.connected = False
         self.loop = event_global_loop
         self.me = None
-        _log_.debug("🔨 Creating a NewClient instance")
+        self.automatic_message_rerequest_from_phone = automatic_message_rerequest_from_phone
+        _log_.debug("Creating a NewClient instance")
 
     def __onLoginStatus(self, uuid: int, status: int):
         pass
@@ -2588,6 +2614,33 @@ class NewAClient:
         if err:
             raise SendAppStateError(err)
 
+    async def fetch_app_state(
+        self,
+        patch_name: str,
+        full_sync: bool = False,
+        only_if_not_synced: bool = False,
+    ):
+        """
+        Fetch updates to the given type of app state.
+
+        :param patch_name: The app state patch name ('regular_high', 'regular_low',
+                           'critical_block', 'critical_unblock_low', 'regular')
+        :type patch_name: str
+        :param full_sync: If True, reset version and re-fetch all patches
+        :type full_sync: bool
+        :param only_if_not_synced: If True, only fetch if not already synced
+        :type only_if_not_synced: bool
+        :raises FetchAppStateError: If there is an error while fetching app state
+        """
+        err = (await self.__client.FetchAppState(
+            self.uuid,
+            patch_name.encode() if isinstance(patch_name, str) else patch_name,
+            full_sync,
+            only_if_not_synced,
+        )).decode()
+        if err:
+            raise FetchAppStateError(err)
+
     async def set_default_disappearing_timer(self, timer: typing.Union[timedelta, int]):
         """
         Sets a default disappearing timer for messages. The timer can be specified as a timedelta or an integer.
@@ -2649,6 +2702,21 @@ class NewAClient:
         :type active: bool
         """
         await self.__client.SetForceActiveDeliveryReceipts(self.uuid, active)
+
+    async def set_automatic_message_rerequest_from_phone(self, enabled: bool):
+        """
+        Enable or disable automatic message re-request from phone when decryption fails.
+
+        When enabled, if a message fails to decrypt (missing sender key), the client
+        will automatically request the message from the user's phone after a short delay.
+        The phone has all sender keys and can forward the decrypted message.
+
+        This is useful for recovering from missing sender keys without re-pairing.
+
+        :param enabled: Whether to enable automatic re-request from phone
+        :type enabled: bool
+        """
+        await self.__client.SetAutomaticMessageRerequestFromPhone(self.uuid, enabled)
 
     async def set_group_announce(self, jid: JID, announce: bool):
         """
@@ -3459,11 +3527,15 @@ class NewAClient:
             raise DecryptPollVoteError(model.Error)
         return model.PollVoteMessage
 
-    async def connect(self):
-        """Establishes a connection to the WhatsApp servers."""
+    async def connect(self, pair_code_mode: bool = False):
+        """Establishes a connection to the WhatsApp servers.
+
+        :param pair_code_mode: If True, skip QR code generation and use pair-code pairing instead.
+            After connect() returns, call PairPhone() to get the pairing code.
+        """
         # Convert the list of functions to a bytearray
         d = bytearray(list(self.event.list_func))
-        _log_.debug("🔒 Attempting to connect to the WhatsApp servers.")
+        _log_.debug("Attempting to connect to the WhatsApp servers.")
         # Set device properties
         deviceprops = (
             DeviceProps(os="Neonize", platformType=DeviceProps.SAFARI)
@@ -3476,6 +3548,14 @@ class NewAClient:
         if self.jid:
             jidbuf = self.jid.SerializeToString()
             jidbuf_size = len(jidbuf)
+
+        # Pair-code mode: pass non-empty buffer to skip QR flow
+        if pair_code_mode:
+            pairphone_buf = b"1"  # Non-empty signals pair-code mode
+            pairphone_size = 1
+        else:
+            pairphone_buf = b""
+            pairphone_size = 0
 
         # Initiate connection to the server
         task = self.__client.Neonize(
@@ -3492,8 +3572,9 @@ class NewAClient:
             len(d),
             deviceprops,
             len(deviceprops),
-            b"",
-            0,
+            pairphone_buf,
+            pairphone_size,
+            self.automatic_message_rerequest_from_phone,
         )
         self.connect_task = connect_task = self.loop.create_task(task)
         return connect_task
@@ -3562,6 +3643,7 @@ class ClientFactory:
         jid: Optional[JID] = None,
         uuid: Optional[str] = None,
         props: Optional[DeviceProps] = None,
+        automatic_message_rerequest_from_phone: bool = False,
     ) -> NewAClient:
         """
         This function creates a new instance of the client. If the jid parameter is not provided, a new client will be created.
@@ -3573,6 +3655,9 @@ class ClientFactory:
         :type jid: JID
         :param props: The device properties of the client.
         :type props: Optional[DeviceProps]
+        :param automatic_message_rerequest_from_phone: Enable automatic message re-request from phone
+            when decryption fails due to missing sender keys. Defaults to False.
+        :type automatic_message_rerequest_from_phone: bool, optional
         """
 
         if jid is None and uuid is None:
@@ -3580,7 +3665,13 @@ class ClientFactory:
             # unique
             raise Exception("JID and UUID cannot be none")
 
-        client = NewAClient(self.database_name, jid, props, uuid)
+        client = NewAClient(
+            self.database_name,
+            jid,
+            props,
+            uuid,
+            automatic_message_rerequest_from_phone=automatic_message_rerequest_from_phone,
+        )
         client.event.list_func = self.event.list_func
         self.clients.append(client)
         return client

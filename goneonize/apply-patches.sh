@@ -29,76 +29,11 @@ else
     echo "✓ Patch 1 applied successfully"
 fi
 
-# Patch 2: Fix link code pairing nonce type
-PATCH_FILE_2="vendor/go.mau.fi/whatsmeow/pair-code.go"
-if [ ! -f "$PATCH_FILE_2" ]; then
-    echo "Error: $PATCH_FILE_2 not found"
-    exit 1
-fi
+# Patch 2: REMOVED - was incorrectly changing []byte{0} to "0"
+# The original []byte{0} is correct - it's a null byte nonce, not ASCII '0'
 
-# Check if patch is already applied
-if grep -q 'Content: "0"' "$PATCH_FILE_2"; then
-    echo "Patch 2 already applied to $PATCH_FILE_2"
-else
-    echo "Applying pair code nonce patch to $PATCH_FILE_2..."
-    sed -i 's/Content: \[\]byte{0}/Content: "0"/g' "$PATCH_FILE_2"
-    echo "✓ Patch 2 applied successfully"
-fi
-
-# Patch 3: Add BuildClearChat function for clearing chat messages
-# Upstream whatsmeow does NOT have BuildClearChat - we must add it
-# Uses 4-element index per Baileys: ['clearChat', jid, '1', '0']
-PATCH_FILE_3="vendor/go.mau.fi/whatsmeow/appstate/encode.go"
-if [ ! -f "$PATCH_FILE_3" ]; then
-    echo "Error: $PATCH_FILE_3 not found"
-    exit 1
-fi
-
-# Check if patch is already applied (with correct 4-element index)
-if grep -q 'IndexClearChat, target.String(), "1", "0"' "$PATCH_FILE_3"; then
-    echo "Patch 3 already applied to $PATCH_FILE_3"
-else
-    # Check if old broken patch exists (2-element index)
-    if grep -q 'func BuildClearChat' "$PATCH_FILE_3"; then
-        echo "ERROR: BuildClearChat exists with wrong index. Manual fix required."
-        echo "Remove the existing BuildClearChat function and re-run this script."
-        exit 1
-    fi
-    echo "Applying BuildClearChat patch to $PATCH_FILE_3..."
-    cat >> "$PATCH_FILE_3" << 'BUILDCLEARCHAT_EOF'
-
-// BuildClearChat builds an app state patch for clearing all messages in a chat.
-// This removes messages from the chat but keeps the chat itself in the conversation list.
-// Note: Upstream whatsmeow does NOT have this function - this is our patch.
-func BuildClearChat(target types.JID, lastMessageTimestamp time.Time, lastMessageKey *waCommon.MessageKey) PatchInfo {
-	if lastMessageTimestamp.IsZero() {
-		lastMessageTimestamp = time.Now()
-	}
-	action := &waSyncAction.ClearChatAction{
-		MessageRange: &waSyncAction.SyncActionMessageRange{
-			LastMessageTimestamp: proto.Int64(lastMessageTimestamp.Unix()),
-		},
-	}
-	if lastMessageKey != nil {
-		action.MessageRange.Messages = []*waSyncAction.SyncActionMessage{{
-			Key:       lastMessageKey,
-			Timestamp: proto.Int64(lastMessageTimestamp.Unix()),
-		}}
-	}
-
-	return PatchInfo{
-		Type: WAPatchRegular,
-		Mutations: []MutationInfo{{
-			Index:   []string{IndexClearChat, target.String(), "1", "0"},
-			Version: 6,
-			Value: &waSyncAction.SyncActionValue{
-				ClearChatAction: action,
-			},
-		}},
-	}
-}
-BUILDCLEARCHAT_EOF
-    echo "✓ Patch 3 applied successfully"
-fi
+# Patch 3: REMOVED - BuildClearChat is now implemented in pure Python
+# See neonize/client.py ChatSettingsStore.clear_chat and neonize/aioze/client.py
+# This removes the maintenance burden of patching whatsmeow vendor code
 
 echo "All patches applied successfully!"
